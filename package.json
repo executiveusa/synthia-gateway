@@ -1,0 +1,32 @@
+{
+  "name": "synthia-gateway",
+  "version": "1.0.0",
+  "description": "Bring Your Own Key (BYOK) proxy for connecting AI agents to LLM subscriptions",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest --testPathPattern=tests/ --forceExit",
+    "test:coverage": "jest --testPathPattern=tests/ --coverage --forceExit",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "nock": "^13.5.4",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 10000
+  }
+}
