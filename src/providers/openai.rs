@@ -59,8 +59,8 @@ impl super::Provider for OpenAIProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("OpenAI error {}: {}", status, body);
-            return Err(anyhow::anyhow!("OpenAI error {}: {}", status, body));
+            error!("OpenAI-format upstream error {}: {}", status, body);
+            return Err(crate::classify::provider_failure(status.as_u16(), body));
         }
 
         let json: Value = response.json().await?;

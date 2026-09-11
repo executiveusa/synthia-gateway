@@ -6,7 +6,24 @@ pub struct GatewayConfig {
     pub auth: AuthConfig,
     pub routing: RoutingConfig,
     pub circuit_breaker: CircuitBreakerConfig,
+    pub safety: SafetyConfig,
     pub providers: ProvidersConfig,
+}
+
+/// Data-safety routing rules.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SafetyConfig {
+    /// Providers whose free tiers may train on request data. They are never
+    /// used unless the caller explicitly tags the request as non-confidential.
+    pub trains_on_inputs_providers: Vec<String>,
+}
+
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        Self {
+            trains_on_inputs_providers: vec!["zai".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,6 +59,8 @@ pub struct ProvidersConfig {
     pub zai: Option<ZaiConfig>,
     pub ollama: Option<OllamaConfig>,
     pub openrouter: Option<OpenRouterConfig>,
+    pub groq: Option<GroqConfig>,
+    pub cloudflare: Option<CloudflareConfig>,
     pub byokey: Option<ByoKeyConfig>,
 }
 
@@ -229,6 +248,58 @@ fn default_openrouter_model() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GroqConfig {
+    pub enabled: bool,
+    pub api_key: Option<String>,
+    #[serde(default = "default_groq_url")]
+    pub base_url: String,
+    #[serde(default = "default_groq_model")]
+    pub default_model: String,
+    #[serde(default = "default_groq_models")]
+    pub available_models: Vec<String>,
+}
+
+fn default_groq_url() -> String {
+    "https://api.groq.com/openai".into()
+}
+fn default_groq_model() -> String {
+    "openai/gpt-oss-120b".into()
+}
+fn default_groq_models() -> Vec<String> {
+    vec![
+        "openai/gpt-oss-120b".into(),
+        "openai/gpt-oss-20b".into(),
+        "groq/compound".into(),
+        "groq/compound-mini".into(),
+        "llama-3.3-70b-versatile".into(),
+        "whisper-large-v3-turbo".into(),
+    ]
+}
+
+/// Cloudflare Workers AI — inactive lane until CLOUDFLARE_ENABLED=true and
+/// CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN are set.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudflareConfig {
+    pub enabled: bool,
+    pub api_key: Option<String>,
+    pub account_id: Option<String>,
+    #[serde(default = "default_cloudflare_model")]
+    pub default_model: String,
+    #[serde(default = "default_cloudflare_models")]
+    pub available_models: Vec<String>,
+}
+
+fn default_cloudflare_model() -> String {
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into()
+}
+fn default_cloudflare_models() -> Vec<String> {
+    vec![
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into(),
+        "@cf/meta/llama-3.1-8b-instruct-fast".into(),
+    ]
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ByoKeyConfig {
     pub enabled: bool,
     // BYOKEY: caller supplies their own provider + api key per request
@@ -272,6 +343,9 @@ impl GatewayConfig {
         aliases.insert("mercury".into(), "inception/mercury-2".into());
         aliases.insert("local".into(), "ollama/llama3.2".into());
         aliases.insert("cheap".into(), "openai/gpt-4o-mini".into());
+        // Free-tier lanes (verified $0 on the providers' free plans)
+        aliases.insert("free".into(), "groq/openai/gpt-oss-120b".into());
+        aliases.insert("free-compound".into(), "groq/groq/compound".into());
 
         // Providers — only configure if keys are present
         let anthropic = {
@@ -425,6 +499,49 @@ impl GatewayConfig {
             }
         };
 
+        let groq = {
+            // StarNet stores the valid key as GROQ_API_TOKEN; accept both.
+            let key = std::env::var("GROQ_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("GROQ_API_TOKEN").ok());
+            let enabled = std::env::var("GROQ_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(key.is_some());
+            if enabled || key.is_some() {
+                Some(GroqConfig {
+                    enabled,
+                    api_key: key,
+                    base_url: std::env::var("GROQ_BASE_URL")
+                        .unwrap_or_else(|_| default_groq_url()),
+                    default_model: std::env::var("GROQ_DEFAULT_MODEL")
+                        .unwrap_or_else(|_| default_groq_model()),
+                    available_models: default_groq_models(),
+                })
+            } else {
+                None
+            }
+        };
+
+        let cloudflare = {
+            // Deliberately opt-in only: a key/account without CLOUDFLARE_ENABLED
+            // stays dark until the lane is deliberately turned on.
+            let enabled = std::env::var("CLOUDFLARE_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+            if enabled {
+                Some(CloudflareConfig {
+                    enabled,
+                    api_key: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
+                    account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID").ok(),
+                    default_model: std::env::var("CLOUDFLARE_DEFAULT_MODEL")
+                        .unwrap_or_else(|_| default_cloudflare_model()),
+                    available_models: default_cloudflare_models(),
+                })
+            } else {
+                None
+            }
+        };
+
         let byokey = {
             let enabled = std::env::var("BYOKEY_ENABLED")
                 .map(|v| v == "true" || v == "1")
@@ -435,6 +552,15 @@ impl GatewayConfig {
                 None
             }
         };
+
+        let trains_on_inputs_providers: Vec<String> = std::env::var("TRAINS_ON_INPUT_PROVIDERS")
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_else(|_| SafetyConfig::default().trains_on_inputs_providers);
 
         Ok(GatewayConfig {
             auth: AuthConfig {
@@ -457,6 +583,9 @@ impl GatewayConfig {
                     .parse()
                     .unwrap_or(60),
             },
+            safety: SafetyConfig {
+                trains_on_inputs_providers,
+            },
             providers: ProvidersConfig {
                 anthropic,
                 openai,
@@ -466,6 +595,8 @@ impl GatewayConfig {
                 zai,
                 ollama,
                 openrouter,
+                groq,
+                cloudflare,
                 byokey,
             },
         })
@@ -481,10 +612,80 @@ impl GatewayConfig {
             self.providers.zai.as_ref().map(|p| p.enabled).unwrap_or(false),
             self.providers.ollama.as_ref().map(|p| p.enabled).unwrap_or(false),
             self.providers.openrouter.as_ref().map(|p| p.enabled).unwrap_or(false),
+            self.providers.groq.as_ref().map(|p| p.enabled).unwrap_or(false),
+            self.providers.cloudflare.as_ref().map(|p| p.enabled).unwrap_or(false),
             self.providers.byokey.as_ref().map(|p| p.enabled).unwrap_or(false),
         ]
         .iter()
         .filter(|&&enabled| enabled)
         .count()
+    }
+    /// Is this provider configured *and* enabled?
+    pub fn provider_enabled(&self, provider: &str) -> bool {
+        match provider {
+            "anthropic" => self.providers.anthropic.as_ref().map(|p| p.enabled),
+            "openai" => self.providers.openai.as_ref().map(|p| p.enabled),
+            "gemini" => self.providers.gemini.as_ref().map(|p| p.enabled),
+            "nvidia" => self.providers.nvidia.as_ref().map(|p| p.enabled),
+            "inception" => self.providers.inception.as_ref().map(|p| p.enabled),
+            "zai" => self.providers.zai.as_ref().map(|p| p.enabled),
+            "ollama" => self.providers.ollama.as_ref().map(|p| p.enabled),
+            "openrouter" => self.providers.openrouter.as_ref().map(|p| p.enabled),
+            "groq" => self.providers.groq.as_ref().map(|p| p.enabled),
+            "cloudflare" => self.providers.cloudflare.as_ref().map(|p| p.enabled),
+            "byokey" => self.providers.byokey.as_ref().map(|p| p.enabled),
+            _ => None,
+        }
+        .unwrap_or(false)
+    }
+
+    /// Does this provider have the credentials its adapter needs?
+    /// (Ollama needs no key; Cloudflare needs account id + token.)
+    pub fn provider_has_credentials(&self, provider: &str) -> bool {
+        match provider {
+            "ollama" => self.providers.ollama.is_some(),
+            "cloudflare" => self
+                .providers
+                .cloudflare
+                .as_ref()
+                .map(|p| p.api_key.is_some() && p.account_id.is_some())
+                .unwrap_or(false),
+            "byokey" => true,
+            "anthropic" => self.providers.anthropic.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "openai" => self.providers.openai.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "gemini" => self.providers.gemini.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "nvidia" => self.providers.nvidia.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "inception" => self.providers.inception.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "zai" => self.providers.zai.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "openrouter" => self.providers.openrouter.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            "groq" => self.providers.groq.as_ref().map(|p| p.api_key.is_some()).unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// The configured default model for a provider, when configured.
+    pub fn default_model_for(&self, provider: &str) -> Option<String> {
+        match provider {
+            "anthropic" => self.providers.anthropic.as_ref().map(|p| p.default_model.clone()),
+            "openai" => self.providers.openai.as_ref().map(|p| p.default_model.clone()),
+            "gemini" => self.providers.gemini.as_ref().map(|p| p.default_model.clone()),
+            "nvidia" => self.providers.nvidia.as_ref().map(|p| p.default_model.clone()),
+            "inception" => self.providers.inception.as_ref().map(|p| p.default_model.clone()),
+            "zai" => self.providers.zai.as_ref().map(|p| p.default_model.clone()),
+            "ollama" => self.providers.ollama.as_ref().map(|p| p.default_model.clone()),
+            "openrouter" => self.providers.openrouter.as_ref().map(|p| p.default_model.clone()),
+            "groq" => self.providers.groq.as_ref().map(|p| p.default_model.clone()),
+            "cloudflare" => self.providers.cloudflare.as_ref().map(|p| p.default_model.clone()),
+            _ => None,
+        }
+    }
+
+    /// Providers that may train on inputs are restricted to explicitly
+    /// non-confidential traffic.
+    pub fn is_restricted_provider(&self, provider: &str) -> bool {
+        self.safety
+            .trains_on_inputs_providers
+            .iter()
+            .any(|p| p == provider)
     }
 }

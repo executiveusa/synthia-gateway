@@ -22,21 +22,33 @@ async fn get_spend(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn get_providers(State(state): State<AppState>) -> Json<Value> {
-    let providers = vec![
-        ("anthropic", state.config.providers.anthropic.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("openai", state.config.providers.openai.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("gemini", state.config.providers.gemini.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("nvidia", state.config.providers.nvidia.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("inception", state.config.providers.inception.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("zai", state.config.providers.zai.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("ollama", state.config.providers.ollama.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("openrouter", state.config.providers.openrouter.as_ref().map(|p| p.enabled).unwrap_or(false)),
-        ("byokey", state.config.providers.byokey.as_ref().map(|p| p.enabled).unwrap_or(false)),
+    let names = [
+        "anthropic", "openai", "gemini", "nvidia", "inception", "zai", "ollama",
+        "openrouter", "groq", "cloudflare", "byokey",
     ];
+    let circuits: std::collections::HashMap<String, (bool, u32)> = {
+        let cb = state.circuit.read().await;
+        cb.snapshot()
+            .into_iter()
+            .map(|s| (s.provider, (s.open, s.consecutive_failures)))
+            .collect()
+    };
 
-    let provider_list: Vec<Value> = providers
+    let provider_list: Vec<Value> = names
         .iter()
-        .map(|(name, enabled)| json!({ "name": name, "enabled": enabled }))
+        .map(|name| {
+            let enabled = state.config.provider_enabled(name);
+            let (circuit_open, consecutive_failures) =
+                circuits.get(*name).copied().unwrap_or((false, 0));
+            json!({
+                "name": name,
+                "enabled": enabled,
+                "has_credentials": state.config.provider_has_credentials(name),
+                "circuit_open": circuit_open,
+                "consecutive_failures": consecutive_failures,
+                "trains_on_inputs": state.config.is_restricted_provider(name),
+            })
+        })
         .collect();
 
     Json(json!({ "providers": provider_list }))
@@ -53,6 +65,8 @@ async fn get_status(State(state): State<AppState>) -> Json<Value> {
         "spend_today_usd": spend,
         "budget_usd": budget,
         "active_providers": state.config.active_provider_count(),
-        "aliases": state.config.routing.aliases
+        "aliases": state.config.routing.aliases,
+        "restricted_providers": state.config.safety.trains_on_inputs_providers,
+        "circuits": state.circuit.read().await.snapshot()
     }))
 }

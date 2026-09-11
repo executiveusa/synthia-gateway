@@ -154,3 +154,58 @@ npm run lint     # ESLint
 ## License
 
 MIT
+
+---
+
+## Rust gateway (what Docker / nixpacks actually deploys — port 8018)
+
+The Rust binary adds spend tracking, a daily budget breaker, provider health
+circuits, executable fallback chains, and data-safety routing on top of the
+same OpenAI-compatible surface.
+
+### Provider env vars
+
+| Variable | Notes |
+|---|---|
+| `GROQ_API_KEY` / `GROQ_API_TOKEN` | Either name works. Enables the Groq lane (default model `openai/gpt-oss-120b`). |
+| `GROQ_BASE_URL` | Defaults to `https://api.groq.com/openai`. |
+| `CLOUDFLARE_ENABLED` | Must be `true`/`1` — the Workers AI lane is dark until explicitly switched on. |
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | Both required when the lane is enabled; otherwise the provider reports misconfigured and is never called. |
+| `GEMINI_API_KEY` | Sent as the `x-goog-api-key` header (never in the URL). |
+| `TRAINS_ON_INPUT_PROVIDERS` | Comma list, default `zai`. These providers only serve requests explicitly tagged non-confidential. |
+
+### Routing and fallback
+
+`FALLBACK_CHAIN` is executed, not decorative. Entries are `provider` or
+`provider/model`, e.g.:
+
+```
+DEFAULT_PROVIDER=groq
+FALLBACK_CHAIN=groq/groq/compound,gemini/gemini-2.0-flash
+```
+
+When `openai/gpt-oss-120b` hits Groq's daily token cap (429 with
+"tokens per day (TPD)"), the next chain entry serves the request. Every
+response carries a `synthia` receipt — the provider/model that actually
+answered, the data class, the cost, and the full attempt log — so a fallback
+is never a silent downgrade. Non-retryable errors (400/401/403) stop the
+chain instead of spraying a bad request across every provider.
+
+### Safety rules
+
+- Providers on the `TRAINS_ON_INPUT_PROVIDERS` list (default: `zai`) refuse
+  standard traffic with `403 restricted_provider`. Callers must tag the
+  request with header `x-data-class: non-confidential` or body
+  `metadata.data_class: "non-confidential"` to use them, and they are skipped
+  in fallback chains for standard traffic.
+- The daily budget middleware (`DAILY_BUDGET_USD`) halts completion traffic
+  with `429 budget_exceeded`; `/health`, `/synthia/*` and `/admin` stay
+  reachable so a halted gateway can still be inspected.
+- Verified free-tier models (Groq free tier, Cloudflare Workers AI free
+  allocation, OpenRouter `:free` variants, local Ollama) cost $0 in the spend
+  ledger. Unknown models get a conservative non-zero estimate — a paid model
+  can never slip through as free.
+- Provider health is tracked per provider: repeated failures open a circuit
+  and the provider is skipped until the reset window elapses. State is
+  mirrored to the `provider_status` table and visible at `/synthia/providers`
+  and `/synthia/status`.

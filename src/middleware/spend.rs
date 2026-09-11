@@ -14,6 +14,13 @@ pub async fn check_budget(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let path = req.uri().path();
+    // The budget gate guards completion endpoints only. Health, status and
+    // admin stay reachable so operators can still inspect a halted gateway.
+    if path.starts_with("/health") || path.starts_with("/synthia") || path.starts_with("/admin") {
+        return Ok(next.run(req).await);
+    }
+
     if state.is_budget_exceeded().await {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,

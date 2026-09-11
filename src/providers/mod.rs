@@ -7,6 +7,8 @@ pub mod inception;
 pub mod zai;
 pub mod ollama;
 pub mod openrouter;
+pub mod groq;
+pub mod cloudflare;
 
 use anyhow::Result;
 

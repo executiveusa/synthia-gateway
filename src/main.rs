@@ -1,23 +1,8 @@
-mod config;
-mod error;
-mod middleware;
-mod providers;
-mod routes;
-mod state;
-
-use axum::{
-    middleware as axum_middleware,
-    Router,
-};
 use std::net::SocketAddr;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{config::GatewayConfig, state::AppState};
+use synthia_gateway::{build_router, config::GatewayConfig, state::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,31 +20,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let state = AppState::new(config).await?;
-
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = Router::new()
-        // Health — no auth
-        .nest("/health", routes::health::router())
-        // OpenAI-compatible endpoints
-        .nest("/v1", routes::openai::router())
-        // Anthropic-native passthrough
-        .nest("/anthropic", routes::anthropic::router())
-        // SYNTHIA-specific endpoints
-        .nest("/synthia", routes::synthia::router())
-        // Admin UI
-        .nest("/admin", routes::admin::router())
-        // Auth middleware (applied after routing, before handlers)
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            middleware::auth::verify_gateway_key,
-        ))
-        .layer(cors)
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    let app = build_router(state);
 
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "8018".into())

@@ -40,6 +40,24 @@ impl Router {
         })
     }
 
+    /// Resolve a fallback-chain entry. Entries may be a full
+    /// "provider/model" pair or a bare provider name (which maps to that
+    /// provider's configured default model).
+    pub fn resolve_fallback(&self, entry: &str) -> Result<RouteTarget> {
+        let entry = entry.trim();
+        if entry.contains('/') {
+            return self.split_provider_model(entry);
+        }
+        let model = self
+            .config
+            .default_model_for(entry)
+            .ok_or_else(|| anyhow!("Fallback provider '{}' is not configured", entry))?;
+        Ok(RouteTarget {
+            provider: entry.to_string(),
+            model,
+        })
+    }
+
     fn split_provider_model(&self, s: &str) -> Result<RouteTarget> {
         let Some(slash) = s.find('/') else {
             return Err(anyhow!("Expected 'provider/model' format, got: {}", s));
