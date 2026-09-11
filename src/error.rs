@@ -14,6 +14,18 @@ pub enum GatewayError {
     #[error("Provider '{0}' is not configured or disabled")]
     ProviderNotFound(String),
 
+    #[error("Provider '{0}' is enabled but missing credentials (API key/account)")]
+    ProviderMisconfigured(String),
+
+    #[error("Provider '{0}' may train on inputs and is restricted to explicitly non-confidential traffic")]
+    RestrictedProvider(String),
+
+    #[error("All provider attempts failed")]
+    AllProvidersFailed {
+        requested_model: String,
+        attempts: serde_json::Value,
+    },
+
     #[error("Provider '{0}' circuit breaker is open — too many failures")]
     CircuitOpen(String),
 
@@ -49,6 +61,21 @@ impl IntoResponse for GatewayError {
                 (StatusCode::UNAUTHORIZED, "unauthorized", self.to_string()),
             GatewayError::ProviderNotFound(_) =>
                 (StatusCode::BAD_REQUEST, "provider_not_found", self.to_string()),
+            GatewayError::ProviderMisconfigured(_) =>
+                (StatusCode::BAD_REQUEST, "provider_misconfigured", self.to_string()),
+            GatewayError::RestrictedProvider(_) =>
+                (StatusCode::FORBIDDEN, "restricted_provider", self.to_string()),
+            GatewayError::AllProvidersFailed { requested_model, attempts } => {
+                let body = Json(json!({
+                    "error": {
+                        "code": "all_providers_failed",
+                        "message": format!("No provider could serve '{}'", requested_model),
+                        "type": "gateway_error",
+                        "attempts": attempts,
+                    }
+                }));
+                return (StatusCode::BAD_GATEWAY, body).into_response();
+            }
             GatewayError::CircuitOpen(_) =>
                 (StatusCode::SERVICE_UNAVAILABLE, "circuit_open", self.to_string()),
             GatewayError::BudgetExceeded =>

@@ -91,17 +91,23 @@ impl super::Provider for GeminiProvider {
             .unwrap_or(&self.config.default_model)
             .to_string();
 
+        // API key travels in a header, never in the URL query string: reqwest
+        // error messages include the URL, and a key in the query would leak
+        // into logs and error reports.
         let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
+            "{}/v1beta/models/{}:generateContent",
             self.config.base_url,
-            model,
-            self.config.api_key.as_deref().unwrap_or("")
+            model
         );
 
         let gemini_request = self.to_gemini_format(&request);
         let response = self
             .client
             .post(&url)
+            .header(
+                "x-goog-api-key",
+                self.config.api_key.as_deref().unwrap_or(""),
+            )
             .json(&gemini_request)
             .send()
             .await?;
@@ -110,7 +116,7 @@ impl super::Provider for GeminiProvider {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             error!("Gemini error {}: {}", status, body);
-            return Err(anyhow::anyhow!("Gemini error {}: {}", status, body));
+            return Err(crate::classify::provider_failure(status.as_u16(), body));
         }
 
         let gemini_response: Value = response.json().await?;
@@ -123,15 +129,18 @@ impl super::Provider for GeminiProvider {
             .unwrap_or(&self.config.default_model)
             .to_string();
         let url = format!(
-            "{}/v1beta/models/{}:streamGenerateContent?key={}&alt=sse",
+            "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
             self.config.base_url,
-            model,
-            self.config.api_key.as_deref().unwrap_or("")
+            model
         );
         let gemini_request = self.to_gemini_format(&request);
         let response = self
             .client
             .post(&url)
+            .header(
+                "x-goog-api-key",
+                self.config.api_key.as_deref().unwrap_or(""),
+            )
             .json(&gemini_request)
             .send()
             .await?;

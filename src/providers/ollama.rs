@@ -37,7 +37,7 @@ impl super::Provider for OllamaProvider {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             error!("Ollama error {}: {}", status, body);
-            return Err(anyhow::anyhow!("Ollama error {}: {}", status, body));
+            return Err(crate::classify::provider_failure(status.as_u16(), body));
         }
 
         Ok(response.json::<Value>().await?)

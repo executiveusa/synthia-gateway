@@ -1,6 +1,6 @@
 [package]
 name = "synthia-gateway"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["Kupuri Media <admin@kupurimedia.com>"]
 description = "SYNTHIA™ LLM Gateway — OpenAI + Anthropic compatible proxy with spend tracking"
@@ -19,10 +19,10 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "macros", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -43,6 +43,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
 
 [profile.release]
 opt-level = 3

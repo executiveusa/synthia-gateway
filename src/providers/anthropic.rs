@@ -130,7 +130,7 @@ impl super::Provider for AnthropicProvider {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             error!("Anthropic error {}: {}", status, body);
-            return Err(anyhow::anyhow!("Anthropic error {}: {}", status, body));
+            return Err(crate::classify::provider_failure(status.as_u16(), body));
         }
 
         let anthropic_response: Value = response.json().await?;
