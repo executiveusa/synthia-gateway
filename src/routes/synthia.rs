@@ -53,6 +53,7 @@ async fn get_status(State(state): State<AppState>) -> Json<Value> {
         "spend_today_usd": spend,
         "budget_usd": budget,
         "active_providers": state.config.active_provider_count(),
-        "aliases": state.config.routing.aliases
+        "aliases": state.config.routing.aliases,
+        "codeden_enabled": state.config.codeden.as_ref().map(|c| c.enabled).unwrap_or(false)
     }))
 }
