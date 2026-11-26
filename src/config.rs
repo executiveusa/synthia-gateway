@@ -7,6 +7,8 @@ pub struct GatewayConfig {
     pub routing: RoutingConfig,
     pub circuit_breaker: CircuitBreakerConfig,
     pub providers: ProvidersConfig,
+    #[serde(default)]
+    pub codeden: Option<CodeDenConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -225,13 +227,23 @@ fn default_openrouter_url() -> String {
     "https://openrouter.ai/api".into()
 }
 fn default_openrouter_model() -> String {
-    "openai/gpt-4o".into()
+    // DeepSeek-first: matches the fleet rule (DeepSeek variants before any paid lane)
+    "deepseek/deepseek-v4.1-flash-1017".into()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ByoKeyConfig {
     pub enabled: bool,
     // BYOKEY: caller supplies their own provider + api key per request
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CodeDenConfig {
+    pub enabled: bool,
+    // Tailnet-only CodeDen API base, e.g. http://100.x.x.x:4318
+    pub base_url: String,
+    // Bearer token for the CodeDen API. Injected from Infisical, never committed.
+    pub token: Option<String>,
 }
 
 impl GatewayConfig {
@@ -254,11 +266,22 @@ impl GatewayConfig {
             .parse()
             .unwrap_or(10.0);
 
+        // DeepSeek-first: when an OpenRouter key is wired, OpenRouter becomes the
+        // default provider (its default model is the DeepSeek variant above).
+        // DEFAULT_PROVIDER still overrides explicitly.
         let default_provider = std::env::var("DEFAULT_PROVIDER")
-            .unwrap_or_else(|_| "anthropic".into());
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                if std::env::var("OPENROUTER_API_KEY").is_ok() {
+                    "openrouter".into()
+                } else {
+                    "anthropic".into()
+                }
+            });
 
         let fallback_chain: Vec<String> = std::env::var("FALLBACK_CHAIN")
-            .unwrap_or_else(|_| "anthropic,openai,gemini".into())
+            .unwrap_or_else(|_| "openrouter,anthropic,openai,gemini".into())
             .split(',')
             .filter(|s| !s.is_empty())
             .map(String::from)
@@ -272,6 +295,8 @@ impl GatewayConfig {
         aliases.insert("mercury".into(), "inception/mercury-2".into());
         aliases.insert("local".into(), "ollama/llama3.2".into());
         aliases.insert("cheap".into(), "openai/gpt-4o-mini".into());
+        aliases.insert("deepseek".into(), "openrouter/deepseek/deepseek-v4.1-flash-1017".into());
+        aliases.insert("deepseek-flash".into(), "openrouter/deepseek/deepseek-v4.1-flash".into());
 
         // Providers — only configure if keys are present
         let anthropic = {
@@ -417,7 +442,8 @@ impl GatewayConfig {
                     api_key: key,
                     base_url: std::env::var("OPENROUTER_BASE_URL")
                         .unwrap_or_else(|_| default_openrouter_url()),
-                    default_model: default_openrouter_model(),
+                    default_model: std::env::var("OPENROUTER_DEFAULT_MODEL")
+                        .unwrap_or_else(|_| default_openrouter_model()),
                     available_models: vec![],
                 })
             } else {
@@ -436,11 +462,30 @@ impl GatewayConfig {
             }
         };
 
+        // CodeDen coding-agent handoff (tailnet-only). Configured when a base
+        // URL is present; CODEDEN_ENABLED=false forces it off.
+        let codeden = {
+            let base = std::env::var("CODEDEN_BASE_URL").ok();
+            let enabled = std::env::var("CODEDEN_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(base.is_some());
+            if enabled || base.is_some() {
+                base.map(|base_url| CodeDenConfig {
+                    enabled,
+                    base_url,
+                    token: std::env::var("CODEDEN_TOKEN").ok(),
+                })
+            } else {
+                None
+            }
+        };
+
         Ok(GatewayConfig {
             auth: AuthConfig {
                 gateway_key,
                 allowed_keys,
             },
+            codeden,
             routing: RoutingConfig {
                 default_provider,
                 fallback_chain,

@@ -50,6 +50,8 @@ async fn main() -> anyhow::Result<()> {
         .nest("/anthropic", routes::anthropic::router())
         // SYNTHIA-specific endpoints
         .nest("/synthia", routes::synthia::router())
+        // CodeDen coding-agent handoff (tailnet-only)
+        .nest("/codeden", routes::codeden::router())
         // Admin UI
         .nest("/admin", routes::admin::router())
         // Auth middleware (applied after routing, before handlers)

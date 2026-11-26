@@ -154,3 +154,40 @@ npm run lint     # ESLint
 ## License
 
 MIT
+
+---
+
+## OpenRouter (DeepSeek-first) and CodeDen wiring
+
+### OpenRouter, DeepSeek-first
+
+When `OPENROUTER_API_KEY` is set, the gateway defaults to OpenRouter as its
+provider and its default model is `deepseek/deepseek-v4.1-flash-1017`
+(DeepSeek-first, matching the fleet routing rule). Explicit env still wins:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OPENROUTER_API_KEY` | — | Enables the OpenRouter provider and (unless `DEFAULT_PROVIDER` is set) makes it the default provider |
+| `OPENROUTER_DEFAULT_MODEL` | `deepseek/deepseek-v4.1-flash-1017` | Any OpenRouter model id |
+| `DEFAULT_PROVIDER` | `openrouter` when its key is present, else `anthropic` | Explicit override |
+| `FALLBACK_CHAIN` | `openrouter,anthropic,openai,gemini` | Comma-separated provider order |
+
+Aliases: `deepseek` -> `openrouter/deepseek/deepseek-v4.1-flash-1017`,
+`deepseek-flash` -> `openrouter/deepseek/deepseek-v4.1-flash`.
+
+### CodeDen handoff (tailnet-only)
+
+Coding jobs can be handed straight to the CodeDen planMode pipeline:
+
+```
+POST /codeden/code-task
+{ "title": "optional", "prd": "the brief", "provider": "claude" }
+
+GET  /codeden/code-task/{session_id}
+```
+
+`message` is accepted as an alias for `prd`. The route forwards to
+`CODEDEN_BASE_URL` (e.g. `http://100.x.x.x:4318`) with `CODEDEN_TOKEN` as a
+bearer token, returns 503 when unconfigured and 502 when the handoff fails.
+CodeDen is only reachable inside the tailnet. `/synthia/status` reports
+`codeden_enabled`. Both secrets come from Infisical and are never committed.

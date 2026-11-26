@@ -12,6 +12,7 @@ pub struct AppState {
     pub router: Arc<Router>,
     pub db: SqlitePool,
     pub daily_spend: Arc<RwLock<f64>>,
+    pub http: reqwest::Client,
 }
 
 impl AppState {
@@ -55,6 +56,7 @@ impl AppState {
             router: Arc::new(router),
             db,
             daily_spend: Arc::new(RwLock::new(spend)),
+            http: reqwest::Client::new(),
         })
     }
 
